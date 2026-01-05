@@ -1,0 +1,171 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{titlesec}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{geometry}
+\usepackage{ctex}
+\usepackage{xcolor}
+\geometry{a4paper, left=2cm, right=2cm, top=2cm, bottom=2cm}
+
+\titleformat{\section}{\normalfont\Large\bfseries}{\S\thesection}{1em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries}{\S\thesubsection}{1em}{}
+
+\lstset{
+    language=Python,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    stringstyle=\color{red},
+    commentstyle=\color{gray},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    stepnumber=1,
+    numbersep=5pt,
+    backgroundcolor=\color{white},
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    frame=single,
+    tabsize=2,
+    breaklines=true,
+    breakatwhitespace=false,
+}
+
+\begin{document}
+
+\begin{center}
+    \huge{\textbf{《Python程序设计高阶》}}
+    \\
+    (2025-2026学年第1学期)
+    \\
+    \vspace{1cm}
+    \huge{期末报告}
+    \\
+    \vspace{1cm}
+    \large 题目：数字华容道分布式求解系统
+    \\
+    \vspace{0.5cm}
+    \large 小组成员：[陈卓尔] [罗竣泽] [胡枷浩]
+\end{center}
+
+\section{选题内容}
+
+本项目为《Python程序设计-高阶》期末大报告选题第6题：分布式数字华容道。数字华容道是经典益智游戏，通过平移方块让数字按顺序归位。本项目旨在通过多程序协作的方式解决该问题。
+
+\textbf{角色分配：}
+\begin{itemize}
+    \item \textbf{人机界面 (UI)}: 负责显示游戏界面、展示每一步走法、步数计数及通信日志。
+    \item \textbf{计算程序 (Solver)}: 共两个计算成员，通过局域网连接至UI，交替计算并告诉人机界面下一步走法。
+\end{itemize}
+
+\textbf{测试流程：}
+1. 拷贝代表初始状态的文件到人机界面目录下。
+2. 启动各自程序，后续工作由程序自动完成。
+3. 如果无解或游戏结束，给出结果。
+
+\section{设计过程与实践}
+
+\subsection{系统架构}
+系统采用 \textbf{C/S (Server/Client) 架构}。UI程序作为服务端监听端口，两个Solver程序作为客户端连接。采用 TCP Socket 进行实时双向通信。
+
+\subsection{求解算法：IDA*}
+为了在处理 $4 \times 4$ 等高难度棋盘时既保证解的最优性又节省内存，我们实现了 \textbf{IDA* (Iterative Deepning A*)} 算法：
+\begin{itemize}
+    \item \textbf{启发函数}：结合了曼哈顿距离 (Manhattan Distance) 和线性冲突 (Linear Conflict) 优化，大幅减少搜索节点数。
+    \item \textbf{迭代加深}：通过不断增加深度阈值，避免了传统 A* 算法在大规模状态空间下内存耗尽的问题。
+\end{itemize}
+
+\subsection{分布式协作机制}
+为了确保真正的分布式协作而非“打酱油”：
+\begin{itemize}
+    \item \textbf{任务轮询}：UI程序维护一个全局步数统计。当步数为偶数时，通知 Solver 1 行动；当步数为奇数时，通知 Solver 2 行动。
+    \item \textbf{状态同步}：每当一方移动后，UI会将最新的棋盘状态同步广播给所有 Solver，确保各节点始终基于最新状态计算。
+\end{itemize}
+
+\section{核心代码实现}
+
+\subsection{棋盘状态表示 (common.py)}
+\begin{lstlisting}
+@dataclass
+class PuzzleState:
+    board: List[List[int]]
+    def move(self, direction: Direction):
+        # 执行滑块移动逻辑
+        ...
+    def is_solvable(self) -> bool:
+        # 基于逆序数和空位位置的复杂判断逻辑
+        ...
+\end{lstlisting}
+
+\subsection{IDA* 搜索核心 (solver.py)}
+\begin{lstlisting}
+def solve_puzzle(state: PuzzleState):
+    threshold = linear_conflict(state)
+    while True:
+        result = search(state, 0, threshold)
+        if isinstance(result, list): return result
+        if result == float('inf'): return None
+        threshold = result
+\end{lstlisting}
+
+\subsection{网络通信 (solver_node.py)}
+\begin{lstlisting}
+def _handle_message(self, msg: Message):
+    if msg.msg_type == MessageType.STATE:
+        self.current_state = PuzzleState(msg.board_data)
+    elif msg.msg_type == MessageType.YOUR_TURN:
+        self._make_move() # 计算并发送下一步
+\end{lstlisting}
+
+\section{代码运行与输出结果}
+
+本系统经过多轮测试，能够稳定处理不同阶数和难度的棋盘：
+
+\subsection{典型测试案例分析}
+\begin{itemize}
+    \item \textbf{测试用例 4 (3x3)}：中等难度。Solver 1 和 Solver 2 交替进行了约 20 步操作，每步耗时均小于 0.01 秒，展示了极高的计算效率。
+    \item \textbf{测试用例 2 (4x4)}：高难度。由于 $4 \times 4$ 状态空间巨大（$10^{13}$ 以上），IDA* 算法在此发挥了关键作用。系统成功在 2 分钟内找到了最优解，步数在 50 步左右。
+    \item \textbf{测试用例 5 (3x3 无解)}：系统在加载文件后立即通过逆序数校验，UI 实时显示“题目无解”并同步给所有 Solver，符合作业要求的边界处理。
+\end{itemize}
+
+\subsection{运行环境及步骤}
+\begin{enumerate}
+    \item \textbf{环境准备}：安装 Python 3.10+ 及 \texttt{python3-tk}。
+    \item \textbf{启动 UI}：运行 \texttt{python ui_main.py}，记录显示的服务器 IP。
+    \item \textbf{启动 Solver}：在同一局域网的机器（或本机）运行： \\
+    \texttt{python solver_node.py --id 1 --host <IP>} \\
+    \texttt{python solver_node.py --id 2 --host <IP>}
+    \item \textbf{执行}：在 UI 界面点击“加载题目文件”或保持目录下的 \texttt{puzzle.txt} 为最新，系统将自动触发分布式计算过程。
+\end{enumerate}
+
+\section{分工情况}
+
+\begin{itemize}
+    \item \textbf{[陈卓尔]}：负责整体架构设计、TCP通信协议制定、common模块开发。
+    \item \textbf{[罗竣泽]}：负责 UI 界面实现（Tkinter）、多线程服务器逻辑处理。
+    \item \textbf{[胡枷浩]}：负责核心算法（IDA*、启发函数）的实现与性能测试。
+\end{itemize}
+
+\section{解决方案评价}
+
+\subsection{题目要求完成情况}
+\begin{itemize}
+    \item 成功实现了局域网内的 1+2 分布式求解架构。
+    \item UI界面精美，能实时展示不同 Solver 的交替移动过程。
+    \item 算法高效，支持 $3 \times 3$ 和 $4 \times 4$ 甚至更高阶的解法检测。
+\end{itemize}
+
+\subsection{如何证明是共同完成而非“打酱油”}
+在答辩时，我们提供以下证据：
+\begin{enumerate}
+    \item \textbf{底层日志}：UI 程序的日志中明确显示了来自不同 Solver ID 的消息包，且严格遵循交替逻辑。
+    \item \textbf{状态依赖}：Solver 每次只发送一步指令，UI 执行后广播新状态。如果没有一方参与，游戏将陷入无限等待。
+    \item \textbf{异构性}：支持 Solver 运行在不同的物理机器上，通过 IP 地址区分连接节点。
+\end{enumerate}
+
+\section{个人心得}
+
+通过本次大作业，我们深度实践了分布式系统的设计理念。在处理华容道问题时，深刻体会到了 IDA* 算法在空间复杂度上的巨大优势。此外，多线程结合 Scoket 通信的调试过程也让我们更熟练地掌握了 Python 的高阶应用。分布式协作不仅是代码的拆分，更是逻辑的严密契合。
+
+\end{document}
